@@ -1,0 +1,1251 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTSagents — Codex RTS Viewer (Vector Scan)</title>
+  <style>
+    :root {
+      --bg: #04060a;
+      --fg: #d8fff7;
+      --neon: #62fff1;
+      --neon2: #7aa7ff;
+      --warn: #ffd46a;
+      --bad: #ff6a8a;
+      --dim: rgba(216, 255, 247, 0.45);
+      --panel: rgba(2, 8, 10, 0.78);
+      --border: rgba(98, 255, 241, 0.25);
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: radial-gradient(1200px 900px at 55% 40%, #071018 0%, var(--bg) 55%, #020307 100%);
+      color: var(--fg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      overflow: hidden;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 1fr 360px;
+    }
+
+    #stage {
+      position: relative;
+      min-width: 0;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* CRT-ish scanlines / vignette (cheap & cheerful) */
+    #crt {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.0) 20%, rgba(0, 0, 0, 0.08)),
+        repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.0) 0px, rgba(0, 0, 0, 0.0) 2px, rgba(0, 0, 0, 0.16) 3px);
+      mix-blend-mode: overlay;
+      opacity: 0.35;
+    }
+
+    #panel {
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+      backdrop-filter: blur(6px);
+      padding: 12px 12px 10px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 14px;
+      letter-spacing: 0.3px;
+      color: var(--neon);
+      text-shadow: 0 0 16px rgba(98, 255, 241, 0.35);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .row3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+      color: var(--fg);
+      background: rgba(7, 15, 20, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    button {
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 0 0 rgba(98, 255, 241, 0);
+      transition: box-shadow 160ms ease, transform 100ms ease, border-color 160ms ease;
+    }
+
+    button:hover {
+      border-color: rgba(98, 255, 241, 0.45);
+      box-shadow: 0 0 18px rgba(98, 255, 241, 0.12);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button.primary {
+      border-color: rgba(98, 255, 241, 0.55);
+      background: rgba(10, 26, 32, 0.75);
+    }
+
+    button.bad {
+      border-color: rgba(255, 106, 138, 0.35);
+    }
+
+    button.warn {
+      border-color: rgba(255, 212, 106, 0.35);
+    }
+
+    .small {
+      font-size: 12px;
+      color: var(--dim);
+      line-height: 1.35;
+    }
+
+    #log {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.25);
+      height: 100%;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    #ingest {
+      width: 100%;
+      height: 120px;
+      resize: none;
+      border-radius: 10px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--neon);
+      background: rgba(6, 18, 22, 0.55);
+    }
+
+    .hint {
+      border: 1px dashed rgba(98, 255, 241, 0.22);
+      border-radius: 10px;
+      padding: 10px 10px;
+    }
+
+    a {
+      color: var(--neon2);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 980px) {
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 330px;
+      }
+
+      #panel {
+        border-left: none;
+        border-top: 1px solid var(--border);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div id="stage">
+      <canvas id="c"></canvas>
+      <div id="crt"></div>
+    </div>
+
+    <div id="panel">
+      <div>
+        <h1>RTSagents — Codexの動きをRTSユニットとして可視化</h1>
+        <div class="small">右クリックドラッグ: カメラ移動 / ホイール: ズーム / 左クリック: ユニット選択</div>
+      </div>
+
+      <div class="row3">
+        <button id="btnDemo" class="primary">DEMO</button>
+        <button id="btnPause" class="warn">PAUSE</button>
+        <button id="btnClear" class="bad">CLEAR</button>
+      </div>
+
+      <div style="display: grid; gap: 10px; min-height: 0">
+        <div class="hint small">
+          <div class="kv">
+            <div>状態</div>
+            <div><span id="status" class="pill">READY</span></div>
+          </div>
+          <div class="kv">
+            <div>時間</div>
+            <div><span id="tNow">0.00</span>s</div>
+          </div>
+          <div class="kv">
+            <div>ユニット</div>
+            <div><span id="uCount">0</span></div>
+          </div>
+          <div class="kv">
+            <div>イベント</div>
+            <div><span id="eCount">0</span> / <span id="eLeft">0</span> left</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="small" style="margin-bottom: 6px">
+            NDJSON（1行1イベント）を貼り付けて <span class="pill">INGEST</span>。ファイルドロップも可。
+          </div>
+          <textarea id="ingest" spellcheck="false"
+            placeholder='{"t":0,"agent":"codex","action":"plan","detail":"inspect"}&#10;{"t":350,"agent":"codex","action":"read","detail":"src/app.ts"}&#10;{"t":950,"agent":"codex","action":"edit","detail":"fix tests","writes":2}&#10;{"t":1700,"agent":"codex","action":"test","detail":"npm test","ok":true}'></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button id="btnIngest" class="primary">INGEST</button>
+            <button id="btnWs" class="warn">WS: OFF</button>
+          </div>
+          <div class="small" style="margin-top: 6px">
+            WS URL（任意）
+            <input id="wsUrl" spellcheck="false" value="ws://localhost:8765" style="width: 100%; margin-top: 6px" />
+            <div style="margin-top: 6px">JSON1行ずつ送ると即反映。</div>
+          </div>
+        </div>
+
+        <div id="log" aria-label="event-log"></div>
+      </div>
+
+      <div class="small">
+        目的地マップ: <span class="pill">PLAN</span> / <span class="pill">REPO</span> / <span class="pill">EDITOR</span> /
+        <span class="pill">TERMINAL</span> / <span class="pill">TEST</span> / <span class="pill">WEB</span>
+      </div>
+
+      <div class="small" style="margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 8px; opacity: 0.8">
+        Support this project: <a href="https://buymeacoffee.com/kgninja" target="_blank">☕ Buy Me a Coffee</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    // -----------------------------
+    // Utilities (deterministic-ish)
+    // -----------------------------
+    function clamp(x, a, b) {
+      return Math.max(a, Math.min(b, x));
+    }
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+    function smoothstep(t) {
+      return t * t * (3 - 2 * t);
+    }
+    function nowMs() {
+      return performance.now();
+    }
+    function fmtSec(ms) {
+      return (ms / 1000).toFixed(2);
+    }
+    function hashStr(s) {
+      // FNV-1a 32-bit
+      let h = 0x811c9dc5;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      return h >>> 0;
+    }
+    function makeRng(seed) {
+      let x = seed >>> 0;
+      return function rnd() {
+        // xorshift32
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        return ((x >>> 0) & 0xffffffff) / 0x100000000;
+      };
+    }
+    function hexToRgba(hex, a) {
+      const h = String(hex || "").trim();
+      if (!/^#?[0-9a-fA-F]{6}$/.test(h)) return `rgba(98,255,241,${a})`;
+      const x = parseInt(h.startsWith("#") ? h.slice(1) : h, 16);
+      const r = (x >>> 16) & 255;
+      const g = (x >>> 8) & 255;
+      const b = x & 255;
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    function rgbToRgba(rgb, a) {
+      const m = String(rgb || "").match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+      if (!m) return `rgba(98,255,241,${a})`;
+      return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
+    }
+
+    // -----------------------------
+    // World / camera
+    // -----------------------------
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    const view = { dpr: 1 };
+
+    const ui = {
+      status: document.getElementById("status"),
+      tNow: document.getElementById("tNow"),
+      uCount: document.getElementById("uCount"),
+      eCount: document.getElementById("eCount"),
+      eLeft: document.getElementById("eLeft"),
+      log: document.getElementById("log"),
+      ingest: document.getElementById("ingest"),
+      btnIngest: document.getElementById("btnIngest"),
+      btnDemo: document.getElementById("btnDemo"),
+      btnPause: document.getElementById("btnPause"),
+      btnClear: document.getElementById("btnClear"),
+      btnWs: document.getElementById("btnWs"),
+      wsUrl: document.getElementById("wsUrl"),
+    };
+
+    const WORLD = {
+      w: 2600,
+      h: 1600,
+    };
+
+    const camera = {
+      x: WORLD.w * 0.5,
+      y: WORLD.h * 0.55,
+      z: 1.0,
+    };
+
+    function clampCamera() {
+      // Keep the visible viewport inside the world.
+      // Camera is a world-space center; viewport size depends on canvas size and zoom.
+      const halfW = canvas.width / (2 * camera.z);
+      const halfH = canvas.height / (2 * camera.z);
+
+      const minX = halfW;
+      const maxX = WORLD.w - halfW;
+      const minY = halfH;
+      const maxY = WORLD.h - halfH;
+
+      camera.x = minX <= maxX ? clamp(camera.x, minX, maxX) : WORLD.w * 0.5;
+      camera.y = minY <= maxY ? clamp(camera.y, minY, maxY) : WORLD.h * 0.5;
+    }
+
+    function worldToScreen(wx, wy) {
+      const cx = (wx - camera.x) * camera.z + canvas.width * 0.5;
+      const cy = (wy - camera.y) * camera.z + canvas.height * 0.5;
+      return { x: cx, y: cy };
+    }
+
+    function screenToWorld(sx, sy) {
+      const wx = (sx - canvas.width * 0.5) / camera.z + camera.x;
+      const wy = (sy - canvas.height * 0.5) / camera.z + camera.y;
+      return { x: wx, y: wy };
+    }
+
+    // -----------------------------
+    // Map (destinations as "buildings")
+    // -----------------------------
+    const DEST = {
+      PLAN: { x: 480, y: 420, label: "PLAN", color: "#62fff1" },
+      REPO: { x: 930, y: 320, label: "REPO", color: "#7aa7ff" },
+      EDITOR: { x: 1380, y: 420, label: "EDITOR", color: "#62fff1" },
+      TERMINAL: { x: 980, y: 820, label: "TERMINAL", color: "#62fff1" },
+      TEST: { x: 1520, y: 880, label: "TEST", color: "#ffd46a" },
+      WEB: { x: 1920, y: 530, label: "WEB", color: "#7aa7ff" },
+    };
+
+    const ACTION_TO_DEST = {
+      plan: "PLAN",
+      read: "REPO",
+      edit: "EDITOR",
+      run: "TERMINAL",
+      test: "TEST",
+      web: "WEB",
+    };
+
+    // -----------------------------
+    // Entities
+    // -----------------------------
+    const state = {
+      running: true,
+      startWall: nowMs(),
+      simNow: 0,
+      selectedId: null,
+      lastActiveId: null,
+      autoFollow: true,
+      userPannedAt: -1,
+      events: [],
+      nextEventIdx: 0,
+      agents: new Map(), // agentId -> unit
+      particles: [],
+      beams: [],
+      ws: null,
+      wsOn: false,
+    };
+
+    function unitColor(agentId) {
+      const h = hashStr(agentId);
+      const r = 120 + ((h >>> 0) & 63);
+      const g = 180 + ((h >>> 6) & 63);
+      const b = 200 + ((h >>> 12) & 55);
+      return `rgb(${clamp(r, 0, 255)},${clamp(g, 0, 255)},${clamp(b, 0, 255)})`;
+    }
+
+    function ensureAgent(agentId) {
+      if (state.agents.has(agentId)) return state.agents.get(agentId);
+      const wasEmpty = state.agents.size === 0;
+      const rng = makeRng(hashStr(agentId) ^ 0xa5a5a5a5);
+      const spawn = DEST.PLAN;
+      const u = {
+        id: agentId,
+        x: spawn.x + (rng() - 0.5) * 90,
+        y: spawn.y + (rng() - 0.5) * 70,
+        vx: 0,
+        vy: 0,
+        a: 0,
+        speed: 240 + rng() * 90,
+        target: { x: spawn.x, y: spawn.y },
+        destName: "PLAN",
+        task: "idle",
+        detail: "",
+        ok: null,
+        hp: 1,
+        color: unitColor(agentId),
+        trail: [],
+        lastTrailAt: 0,
+        wobbleSeed: rng() * 1000,
+      };
+      state.agents.set(agentId, u);
+      logLine(`+ spawn ${agentId}`);
+      if (wasEmpty) {
+        camera.x = u.x;
+        camera.y = u.y;
+        clampCamera();
+      }
+      return u;
+    }
+
+    function pushTrail(u) {
+      const t = state.simNow;
+      if (t - u.lastTrailAt < 70) return;
+      u.lastTrailAt = t;
+      u.trail.push({ x: u.x, y: u.y, t });
+      if (u.trail.length > 160) u.trail.shift();
+    }
+
+    function addParticles(x, y, color, n, spread, lifeMs) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * spread;
+        state.particles.push({
+          x: x + Math.cos(a) * r,
+          y: y + Math.sin(a) * r,
+          vx: (Math.random() - 0.5) * 160,
+          vy: (Math.random() - 0.5) * 160,
+          t0: state.simNow,
+          life: lifeMs,
+          color,
+        });
+      }
+    }
+
+    function addBeam(x1, y1, x2, y2, color, lifeMs) {
+      state.beams.push({ x1, y1, x2, y2, color, t0: state.simNow, life: lifeMs });
+    }
+
+    // -----------------------------
+    // Event ingestion
+    // -----------------------------
+    function normalizeEvent(raw) {
+      // Supported fields:
+      // {t(ms), agent, action, detail, dest, x, y, ok, writes, reads, tests, cmd}
+      // - If x,y provided -> direct world target
+      // - Else action -> destination (PLAN/REPO/EDITOR/TERMINAL/TEST/WEB)
+      const e = {
+        t: Number(raw.t ?? 0),
+        agent: String(raw.agent ?? "codex"),
+        action: String(raw.action ?? "log"),
+        detail: String(raw.detail ?? raw.cmd ?? ""),
+        ok: raw.ok === undefined ? null : Boolean(raw.ok),
+        writes: raw.writes === undefined ? 0 : Number(raw.writes),
+        reads: raw.reads === undefined ? 0 : Number(raw.reads),
+        tests: raw.tests === undefined ? 0 : Number(raw.tests),
+        dest: raw.dest ? String(raw.dest) : null,
+        x: raw.x === undefined ? null : Number(raw.x),
+        y: raw.y === undefined ? null : Number(raw.y),
+      };
+      if (!Number.isFinite(e.t)) e.t = 0;
+      return e;
+    }
+
+    function ingestNdjson(text) {
+      const lines = text
+        .split(/\r?\n/g)
+        .map((s) => s.trim())
+        .filter((s) => s.length && !s.startsWith("#"));
+      const parsed = [];
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          parsed.push(normalizeEvent(obj));
+        } catch (err) {
+          logLine(`! parse error: ${line.slice(0, 160)}`);
+        }
+      }
+      if (!parsed.length) return 0;
+      parsed.sort((a, b) => a.t - b.t);
+
+      // If incoming events are scheduled far in the future (common when a previous session wrote huge `t`,
+      // or when the sender uses a different timebase), warp them near "now" so they visibly apply.
+      // This keeps the viewer reactive for live streams.
+      const minT = parsed[0].t;
+      if (minT > state.simNow + 1500) {
+        const shift = state.simNow + 200 - minT;
+        for (const e of parsed) e.t = Math.max(0, e.t + shift);
+      }
+
+      // Merge into timeline (keep stable ordering by time).
+      // This is intentionally simple: append then sort.
+      state.events.push(...parsed);
+      state.events.sort((a, b) => a.t - b.t);
+      ui.eCount.textContent = String(state.events.length);
+      ui.eLeft.textContent = String(state.events.length - state.nextEventIdx);
+      logLine(`+ ingested ${parsed.length} events`);
+      return parsed.length;
+    }
+
+    // -----------------------------
+    // Event application -> unit orders
+    // -----------------------------
+    function eventTarget(e, u) {
+      if (Number.isFinite(e.x) && Number.isFinite(e.y) && e.x !== null && e.y !== null) {
+        return { name: "POINT", x: e.x, y: e.y };
+      }
+      const destName = e.dest ? String(e.dest) : ACTION_TO_DEST[e.action];
+      const dn = destName && DEST[destName] ? destName : "PLAN";
+      const base = DEST[dn] || DEST.PLAN;
+
+      // Even "small" actions should be visible as movement:
+      // target a deterministic offset point around the destination (per event).
+      const radiusByDest = {
+        PLAN: 50,
+        REPO: 90,
+        EDITOR: 110,
+        TERMINAL: 120,
+        TEST: 150,
+        WEB: 120,
+      };
+      const r0 = radiusByDest[dn] ?? 80;
+      const sig = `${e.agent}|${e.action}|${e.detail}|${e.t}|${e.ok === null ? "?" : e.ok ? "1" : "0"}`;
+      const rng = makeRng(hashStr(sig) ^ 0x9e3779b9);
+      const a = rng() * Math.PI * 2;
+      const r = (0.35 + rng() * 0.65) * r0;
+      const tx = clamp(base.x + Math.cos(a) * r, 80, WORLD.w - 80);
+      const ty = clamp(base.y + Math.sin(a) * r, 80, WORLD.h - 80);
+
+      // If unit is already right on top of the target (rare), nudge slightly.
+      if (u) {
+        const d = Math.hypot(u.x - tx, u.y - ty);
+        if (d < 14) {
+          const a2 = a + Math.PI * 0.5;
+          return { name: dn, x: clamp(tx + Math.cos(a2) * 22, 80, WORLD.w - 80), y: clamp(ty + Math.sin(a2) * 22, 80, WORLD.h - 80) };
+        }
+      }
+      return { name: dn, x: tx, y: ty };
+    }
+
+    function applyEvent(e) {
+      const u = ensureAgent(e.agent);
+      const tgt = eventTarget(e, u);
+      u.target.x = tgt.x;
+      u.target.y = tgt.y;
+      u.destName = tgt.name;
+      u.task = e.action;
+      u.detail = e.detail;
+      u.ok = e.ok;
+      state.lastActiveId = u.id;
+      if (state.selectedId === null) state.selectedId = u.id;
+
+      const dx = u.target.x - u.x;
+      const dy = u.target.y - u.y;
+      const d = Math.hypot(dx, dy);
+      const k = clamp(d / 420, 0.2, 1.0);
+      u.speed = lerp(220, 380, k);
+
+      if (e.reads > 0) addBeam(u.x, u.y, DEST.REPO.x, DEST.REPO.y, "#7aa7ff", 260);
+      if (e.writes > 0) addBeam(u.x, u.y, DEST.EDITOR.x, DEST.EDITOR.y, "#62fff1", 260);
+      if (e.tests > 0) addBeam(u.x, u.y, DEST.TEST.x, DEST.TEST.y, "#ffd46a", 260);
+
+      if (e.ok === true) addParticles(u.target.x, u.target.y, "#62fff1", 14, 28, 520);
+      if (e.ok === false) addParticles(u.target.x, u.target.y, "#ff6a8a", 18, 38, 720);
+
+      logLine(
+        `@ t=${fmtSec(e.t)} ${e.agent} ${e.action}${e.ok === null ? "" : e.ok ? " ok" : " FAIL"} -> ${u.destName}${e.detail ? " | " + e.detail : ""}`
+      );
+    }
+
+    // -----------------------------
+    // Simulation
+    // -----------------------------
+    function update(dtMs) {
+      const dt = dtMs / 1000;
+
+      // Advance sim time (bounded so ingestion timestamps stay usable).
+      if (state.running) state.simNow += dtMs;
+
+      // Apply due events
+      while (state.nextEventIdx < state.events.length && state.events[state.nextEventIdx].t <= state.simNow) {
+        applyEvent(state.events[state.nextEventIdx]);
+        state.nextEventIdx++;
+      }
+      ui.eLeft.textContent = String(state.events.length - state.nextEventIdx);
+
+      // Units
+      for (const u of state.agents.values()) {
+        // If we've arrived, keep a tiny patrol orbit so "small changes" remain visible.
+        let tx = u.target.x;
+        let ty = u.target.y;
+        const d0 = Math.hypot(tx - u.x, ty - u.y);
+        const arrive0 = d0 < 10;
+        if (arrive0) {
+          const w = (state.simNow / 1000) * 1.3 + u.wobbleSeed;
+          const r = 14 + 6 * Math.sin(w * 0.7);
+          tx = clamp(u.target.x + Math.cos(w) * r, 80, WORLD.w - 80);
+          ty = clamp(u.target.y + Math.sin(w) * r, 80, WORLD.h - 80);
+        }
+
+        const dx = tx - u.x;
+        const dy = ty - u.y;
+        const d = Math.hypot(dx, dy);
+        const arrive = d < 6;
+        const ax = d > 1e-6 ? dx / d : 0;
+        const ay = d > 1e-6 ? dy / d : 0;
+
+        const wob = Math.sin((state.simNow / 1000) * 4.0 + u.wobbleSeed) * 0.22;
+        const px = ax * Math.cos(wob) - ay * Math.sin(wob);
+        const py = ax * Math.sin(wob) + ay * Math.cos(wob);
+
+        const moveSpeed = arrive ? 0 : arrive0 ? 90 : u.speed;
+        const desiredVx = px * moveSpeed;
+        const desiredVy = py * moveSpeed;
+        u.vx = lerp(u.vx, desiredVx, clamp(dt * 5.5, 0, 1));
+        u.vy = lerp(u.vy, desiredVy, clamp(dt * 5.5, 0, 1));
+
+        u.x += u.vx * dt;
+        u.y += u.vy * dt;
+        u.x = clamp(u.x, 80, WORLD.w - 80);
+        u.y = clamp(u.y, 80, WORLD.h - 80);
+
+        if (!arrive) u.a = Math.atan2(u.vy, u.vx);
+        pushTrail(u);
+      }
+
+      // Particles
+      const pNext = [];
+      for (const p of state.particles) {
+        const age = state.simNow - p.t0;
+        if (age >= p.life) continue;
+        p.x += (p.vx * dtMs) / 1000;
+        p.y += (p.vy * dtMs) / 1000;
+        p.vx *= Math.pow(0.25, dt);
+        p.vy *= Math.pow(0.25, dt);
+        pNext.push(p);
+      }
+      state.particles = pNext;
+
+      const bNext = [];
+      for (const b of state.beams) {
+        const age = state.simNow - b.t0;
+        if (age >= b.life) continue;
+        bNext.push(b);
+      }
+      state.beams = bNext;
+
+      ui.tNow.textContent = fmtSec(state.simNow);
+      ui.uCount.textContent = String(state.agents.size);
+
+      // Auto-follow the active unit unless the user recently panned.
+      if (state.autoFollow && state.lastActiveId && state.agents.has(state.lastActiveId)) {
+        if (state.userPannedAt < 0 || state.simNow - state.userPannedAt > 2500) {
+          const u = state.agents.get(state.lastActiveId);
+          camera.x = lerp(camera.x, u.x, clamp(dt * 2.6, 0, 1));
+          camera.y = lerp(camera.y, u.y, clamp(dt * 2.6, 0, 1));
+          clampCamera();
+
+        }
+      }
+    }
+
+    // -----------------------------
+    // Rendering (vector-scan-ish)
+    // -----------------------------
+    function strokeGlow(drawFn, color, width, glow) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.shadowColor = color;
+      ctx.shadowBlur = glow;
+      drawFn();
+      ctx.restore();
+    }
+
+    function drawGrid() {
+      const step = 80;
+      const minor = 40;
+      const minX = camera.x - canvas.width / (2 * camera.z) - 120;
+      const maxX = camera.x + canvas.width / (2 * camera.z) + 120;
+      const minY = camera.y - canvas.height / (2 * camera.z) - 120;
+      const maxY = camera.y + canvas.height / (2 * camera.z) + 120;
+
+      function gridLines(spacing, alpha, width) {
+        const x0 = Math.floor(minX / spacing) * spacing;
+        const y0 = Math.floor(minY / spacing) * spacing;
+        strokeGlow(
+          () => {
+            ctx.beginPath();
+            for (let x = x0; x <= maxX; x += spacing) {
+              const a = worldToScreen(x, minY);
+              const b = worldToScreen(x, maxY);
+              ctx.moveTo(a.x, a.y);
+              ctx.lineTo(b.x, b.y);
+            }
+            for (let y = y0; y <= maxY; y += spacing) {
+              const a = worldToScreen(minX, y);
+              const b = worldToScreen(maxX, y);
+              ctx.moveTo(a.x, a.y);
+              ctx.lineTo(b.x, b.y);
+            }
+            ctx.stroke();
+          },
+          `rgba(98, 255, 241, ${alpha})`,
+          width,
+          6
+        );
+      }
+
+      gridLines(minor, 0.06, 1);
+      gridLines(step, 0.12, 1.2);
+    }
+
+    function drawBuilding(name, b) {
+      const p = worldToScreen(b.x, b.y);
+      const s = 64 * camera.z;
+      const flick = 1 + (Math.random() - 0.5) * 0.02;
+      const c = b.color;
+
+      // Shape: hex-ish "platform"
+      const pts = [
+        { x: p.x - s * 0.7, y: p.y },
+        { x: p.x - s * 0.35, y: p.y - s * 0.55 },
+        { x: p.x + s * 0.35, y: p.y - s * 0.55 },
+        { x: p.x + s * 0.7, y: p.y },
+        { x: p.x + s * 0.35, y: p.y + s * 0.55 },
+        { x: p.x - s * 0.35, y: p.y + s * 0.55 },
+      ];
+
+      strokeGlow(
+        () => {
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+          ctx.closePath();
+          ctx.stroke();
+        },
+        c,
+        1.6 * flick,
+        18 * camera.z
+      );
+
+      // label line
+      strokeGlow(
+        () => {
+          ctx.beginPath();
+          ctx.moveTo(p.x - s * 0.5, p.y + s * 0.75);
+          ctx.lineTo(p.x + s * 0.5, p.y + s * 0.75);
+          ctx.stroke();
+        },
+        c,
+        1.0,
+        10 * camera.z
+      );
+
+      ctx.save();
+      ctx.fillStyle = c;
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 14 * camera.z;
+      ctx.font = `${Math.max(10, Math.floor(11 * camera.z))}px ui-monospace, monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.globalAlpha = 0.85;
+      ctx.fillText(name, p.x, p.y + s * 0.98);
+      ctx.restore();
+    }
+
+    function drawTrail(u) {
+      if (u.trail.length < 2) return;
+      const t = state.simNow;
+      const maxAge = 3200;
+      strokeGlow(
+        () => {
+          ctx.beginPath();
+          let started = false;
+          for (const pt of u.trail) {
+            const age = t - pt.t;
+            if (age > maxAge) continue;
+            const sp = worldToScreen(pt.x, pt.y);
+            if (!started) {
+              ctx.moveTo(sp.x, sp.y);
+              started = true;
+            } else {
+              ctx.lineTo(sp.x, sp.y);
+            }
+          }
+          ctx.stroke();
+        },
+        rgbToRgba(u.color, 0.2),
+        1.2,
+        16 * camera.z
+      );
+    }
+
+    function drawUnit(u) {
+      const p = worldToScreen(u.x, u.y);
+      const size = 12 * camera.z;
+      const a = u.a;
+      const c = u.color;
+
+      // Triangle-ish "ship"
+      const nx = Math.cos(a),
+        ny = Math.sin(a);
+      const px = -ny,
+        py = nx;
+
+      const tip = { x: p.x + nx * size * 1.2, y: p.y + ny * size * 1.2 };
+      const l = { x: p.x - nx * size * 0.8 + px * size * 0.8, y: p.y - ny * size * 0.8 + py * size * 0.8 };
+      const r = { x: p.x - nx * size * 0.8 - px * size * 0.8, y: p.y - ny * size * 0.8 - py * size * 0.8 };
+
+      const selected = state.selectedId === u.id;
+      const glow = selected ? 26 : 18;
+      const width = selected ? 2.2 : 1.6;
+
+      strokeGlow(
+        () => {
+          ctx.beginPath();
+          ctx.moveTo(tip.x, tip.y);
+          ctx.lineTo(l.x, l.y);
+          ctx.lineTo(r.x, r.y);
+          ctx.closePath();
+          ctx.stroke();
+        },
+        c,
+        width,
+        glow * camera.z
+      );
+
+      if (u.ok === false) {
+        // "damage" X
+        strokeGlow(
+          () => {
+            ctx.beginPath();
+            ctx.moveTo(p.x - size * 1.2, p.y - size * 1.2);
+            ctx.lineTo(p.x + size * 1.2, p.y + size * 1.2);
+            ctx.moveTo(p.x + size * 1.2, p.y - size * 1.2);
+            ctx.lineTo(p.x - size * 1.2, p.y + size * 1.2);
+            ctx.stroke();
+          },
+          "#ff6a8a",
+          1.6,
+          18 * camera.z
+        );
+      }
+    }
+
+    function drawBeams() {
+      for (const b of state.beams) {
+        const age = state.simNow - b.t0;
+        const t = clamp(age / b.life, 0, 1);
+        const alpha = (1 - t) * 0.45;
+        const a = worldToScreen(b.x1, b.y1);
+        const c = worldToScreen(b.x2, b.y2);
+        const jitter = 2.2 * camera.z;
+        const mid = {
+          x: (a.x + c.x) * 0.5 + (Math.random() - 0.5) * jitter,
+          y: (a.y + c.y) * 0.5 + (Math.random() - 0.5) * jitter,
+        };
+        strokeGlow(
+          () => {
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.quadraticCurveTo(mid.x, mid.y, c.x, c.y);
+            ctx.stroke();
+          },
+          hexToRgba(b.color, alpha),
+          1.4,
+          22 * camera.z
+        );
+      }
+    }
+
+    function drawParticles() {
+      for (const p of state.particles) {
+        const age = state.simNow - p.t0;
+        const t = clamp(age / p.life, 0, 1);
+        const a = 1 - smoothstep(t);
+        const sp = worldToScreen(p.x, p.y);
+        const r = (1.2 + (1 - t) * 2.2) * camera.z;
+        strokeGlow(
+          () => {
+            ctx.beginPath();
+            ctx.moveTo(sp.x - r, sp.y);
+            ctx.lineTo(sp.x + r, sp.y);
+            ctx.moveTo(sp.x, sp.y - r);
+            ctx.lineTo(sp.x, sp.y + r);
+            ctx.stroke();
+          },
+          hexToRgba(p.color, 0.3 * a),
+          1.0,
+          18 * camera.z
+        );
+      }
+    }
+
+    function render() {
+      // Clear background
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Global flicker
+      const flick = 0.92 + Math.random() * 0.12;
+      ctx.globalAlpha = flick;
+
+      drawGrid();
+      for (const [name, b] of Object.entries(DEST)) drawBuilding(name, b);
+      drawBeams();
+      drawParticles();
+
+      // Trails then units
+      for (const u of state.agents.values()) drawTrail(u);
+      for (const u of state.agents.values()) drawUnit(u);
+
+      // Selected HUD label near unit
+      if (state.selectedId && state.agents.has(state.selectedId)) {
+        const u = state.agents.get(state.selectedId);
+        const p = worldToScreen(u.x, u.y);
+        const label = `${u.id} :: ${u.task}${u.ok === null ? "" : u.ok ? " ok" : " FAIL"}${u.detail ? " | " + u.detail : ""}`;
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = "#d8fff7";
+        ctx.shadowColor = "#62fff1";
+        ctx.shadowBlur = 18 * camera.z;
+        ctx.font = `${Math.max(12, Math.floor(12 * camera.z))}px ui-monospace, monospace`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(label, p.x + 14, p.y - 14);
+        ctx.restore();
+      }
+
+      ctx.globalAlpha = 1;
+    }
+
+    // -----------------------------
+    // Logging (panel)
+    // -----------------------------
+    function logLine(s) {
+      const ts = fmtSec(state.simNow).padStart(6, " ");
+      ui.log.textContent += `[${ts}] ${s}\n`;
+      ui.log.scrollTop = ui.log.scrollHeight;
+    }
+
+    // -----------------------------
+    // Input: camera + selection
+    // -----------------------------
+    let pointer = { down: false, btn: 0, sx: 0, sy: 0, cx: 0, cy: 0 };
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      view.dpr = dpr;
+      const w = Math.floor(canvas.clientWidth * dpr);
+      const h = Math.floor(canvas.clientHeight * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    }
+
+    function clientToCanvasXY(clientX, clientY) {
+      const r = canvas.getBoundingClientRect();
+      return { x: (clientX - r.left) * view.dpr, y: (clientY - r.top) * view.dpr };
+    }
+
+    function pickUnitAt(sx, sy) {
+      const w = screenToWorld(sx, sy);
+      let best = null;
+      let bestD = Infinity;
+      for (const u of state.agents.values()) {
+        const d = Math.hypot(u.x - w.x, u.y - w.y);
+        if (d < 28 && d < bestD) {
+          best = u.id;
+          bestD = d;
+        }
+      }
+      return best;
+    }
+
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    canvas.addEventListener("pointerdown", (e) => {
+      canvas.setPointerCapture(e.pointerId);
+      const p = clientToCanvasXY(e.clientX, e.clientY);
+      pointer.down = true;
+      pointer.btn = e.button;
+      pointer.sx = p.x;
+      pointer.sy = p.y;
+      pointer.cx = camera.x;
+      pointer.cy = camera.y;
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!pointer.down) return;
+      if (pointer.btn !== 2) return;
+      const p = clientToCanvasXY(e.clientX, e.clientY);
+      const dx = p.x - pointer.sx;
+      const dy = p.y - pointer.sy;
+      camera.x = pointer.cx - dx / camera.z;
+      camera.y = pointer.cy - dy / camera.z;
+      clampCamera();
+      state.userPannedAt = state.simNow;
+    });
+    canvas.addEventListener("pointerup", (e) => {
+      const p = clientToCanvasXY(e.clientX, e.clientY);
+      const moved = Math.hypot(p.x - pointer.sx, p.y - pointer.sy) > 6 * view.dpr;
+      if (!moved && e.button === 0) {
+        state.selectedId = pickUnitAt(p.x, p.y);
+        if (state.selectedId && state.agents.has(state.selectedId)) {
+          const u = state.agents.get(state.selectedId);
+          camera.x = u.x;
+          camera.y = u.y;
+          clampCamera();
+        }
+      }
+      pointer.down = false;
+    });
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const z0 = camera.z;
+        const scale = Math.exp(-e.deltaY * 0.0013);
+        const z1 = clamp(z0 * scale, 0.55, 2.1);
+        const s = clientToCanvasXY(e.clientX, e.clientY);
+        const w0 = screenToWorld(s.x, s.y);
+        camera.z = z1;
+        const w1 = screenToWorld(s.x, s.y);
+        camera.x += w0.x - w1.x;
+        camera.y += w0.y - w1.y;
+        clampCamera();
+      },
+      { passive: false }
+    );
+
+    // -----------------------------
+    // Controls
+    // -----------------------------
+    function setStatus(s) {
+      ui.status.textContent = s;
+    }
+
+    ui.btnPause.addEventListener("click", () => {
+      state.running = !state.running;
+      ui.btnPause.textContent = state.running ? "PAUSE" : "RESUME";
+      setStatus(state.running ? "RUN" : "PAUSED");
+    });
+
+    ui.btnClear.addEventListener("click", () => {
+      state.events = [];
+      state.nextEventIdx = 0;
+      state.agents.clear();
+      state.particles = [];
+      state.beams = [];
+      state.selectedId = null;
+      state.simNow = 0;
+      state.startWall = nowMs();
+      ui.log.textContent = "";
+      ui.eCount.textContent = "0";
+      ui.eLeft.textContent = "0";
+      ui.uCount.textContent = "0";
+      ui.tNow.textContent = "0.00";
+      setStatus("READY");
+      logLine("~ cleared");
+    });
+
+    ui.btnIngest.addEventListener("click", () => {
+      const n = ingestNdjson(ui.ingest.value || "");
+      if (n > 0) setStatus("INGESTED");
+    });
+
+    ui.btnDemo.addEventListener("click", () => {
+      const base = state.events.length ? state.events[state.events.length - 1].t + 350 : state.simNow + 200;
+      const demo = [];
+      const agents = ["codex", "codex#2", "codex#3"];
+      let t = base;
+      function add(agent, action, detail, extra) {
+        demo.push(
+          normalizeEvent(
+            Object.assign(
+              {
+                t,
+                agent,
+                action,
+                detail,
+              },
+              extra || {}
+            )
+          )
+        );
+        t += 260 + Math.random() * 520;
+      }
+      add(agents[0], "plan", "Inspect workspace");
+      add(agents[0], "read", "rg -n \"failing test\" ./src", { reads: 3 });
+      add(agents[1], "read", "open src/...", { reads: 2 });
+      add(agents[2], "plan", "Narrow repro");
+      add(agents[0], "edit", "Fix edge case (minimal)", { writes: 2 });
+      add(agents[1], "run", "node scripts/...", {});
+      add(agents[0], "test", "npm test", { tests: 8, ok: true });
+      add(agents[2], "test", "targeted test", { tests: 1, ok: true });
+      add(agents[1], "web", "Check docs (optional)", { ok: true });
+
+      // Interleave by time (roughly)
+      demo.forEach((e) => (e.t += Math.floor((Math.random() - 0.5) * 240)));
+      state.events.push(...demo);
+      state.events.sort((a, b) => a.t - b.t);
+      ui.eCount.textContent = String(state.events.length);
+      ui.eLeft.textContent = String(state.events.length - state.nextEventIdx);
+      setStatus("DEMO");
+      logLine(`+ demo queued (${demo.length})`);
+    });
+
+    // Drag & drop NDJSON
+    window.addEventListener("dragover", (e) => e.preventDefault());
+    window.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      const text = await f.text();
+      ingestNdjson(text);
+      setStatus(`FILE:${f.name}`);
+    });
+
+    // Optional WebSocket stream
+    function wsConnect() {
+      try {
+        const url = (ui.wsUrl && ui.wsUrl.value ? String(ui.wsUrl.value) : "").trim() || "ws://localhost:8765";
+        const ws = new WebSocket(url);
+        state.ws = ws;
+
+        ws.onopen = () => {
+          state.wsOn = true;
+          ui.btnWs.textContent = "WS: ON";
+          setStatus("WS");
+          logLine(`+ ws connected (${ws.url})`);
+
+        };
+        ws.onmessage = (msg) => {
+          const s = String(msg.data || "").trim();
+          if (!s) return;
+          ingestNdjson(s);
+        };
+        ws.onclose = () => {
+          state.wsOn = false;
+          ui.btnWs.textContent = "WS: OFF";
+          logLine("! ws closed");
+          state.ws = null;
+        };
+        ws.onerror = () => {
+          logLine("! ws error");
+        };
+      } catch {
+        logLine("! ws connect failed");
+      }
+    }
+
+    ui.btnWs.addEventListener("click", () => {
+      if (state.ws && state.wsOn) {
+        state.ws.close();
+        return;
+      }
+      wsConnect();
+    });
+
+    // -----------------------------
+    // Main loop
+    // -----------------------------
+    let last = nowMs();
+    function frame() {
+      resize();
+      const t = nowMs();
+      const dtMs = clamp(t - last, 0, 40);
+      last = t;
+
+      if (state.running) update(dtMs);
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    // Boot
+    setStatus("READY");
+    logLine("RTSagents viewer ready");
+    ui.eCount.textContent = "0";
+    ui.eLeft.textContent = "0";
+    // Debug hook (useful for manual testing from DevTools console).
+    window.__RTSAGENTS = { ingestNdjson, state, camera, DEST };
+    requestAnimationFrame(frame);
+  </script>
+</body>
+
+</html>
